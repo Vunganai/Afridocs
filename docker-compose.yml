@@ -1,0 +1,112 @@
+version: "3.9"
+
+# ============================================================
+#  AfriDocs AI — Docker Compose (local development)
+#
+#  Services:
+#    api      — FastAPI backend (port 8000)
+#    worker   — Celery async task worker
+#    beat     — Celery periodic task scheduler
+#    redis    — Local broker/result backend (port 6379)
+#    frontend — Vite dev server (port 5173)
+#
+#  Usage:
+#    docker compose up --build          # start all
+#    docker compose up api worker       # start backend only
+#    docker compose logs -f worker      # tail worker logs
+# ============================================================
+
+services:
+
+  # ── Redis ──────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: afridocs_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI Backend ────────────────────────────────────────
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: afridocs_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Celery Worker ──────────────────────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: afridocs_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=2 -Q documents
+
+  # ── Celery Beat (periodic tasks) ───────────────────────────
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: afridocs_beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A app.worker.celery_app beat --loglevel=info
+
+  # ── Frontend (Vite dev server) ─────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: afridocs_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    env_file:
+      - .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
+volumes:
+  redis_data:
+  uploads_data:
