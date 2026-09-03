@@ -1,15 +1,19 @@
 """
 Auth/security utilities.
 Validates Supabase-issued JWTs and extracts the authenticated user context.
+
+Supabase now uses ECC (P-256) / ES256 asymmetric signing.
+Tokens are verified using the public key from Supabase's JWKS endpoint.
 """
 
 from typing import Annotated
 from uuid import UUID
 
 import structlog
+import jwt as pyjwt
+from jwt.algorithms import ECAlgorithm
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
 from pydantic import BaseModel
 
 from app.core.config import get_settings
@@ -17,6 +21,25 @@ from app.core.config import get_settings
 logger = structlog.get_logger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=True)
+
+# Supabase public key (EC P-256) from:
+# https://godrwuupzfsertenreag.supabase.co/auth/v1/.well-known/jwks.json
+_SUPABASE_PUBLIC_KEY_JWK = {
+    "alg": "ES256",
+    "crv": "P-256",
+    "ext": True,
+    "key_ops": ["verify"],
+    "kid": "a9ab7c8e-9407-4678-a8a2-3abe258c1930",
+    "kty": "EC",
+    "use": "sig",
+    "x": "4t2ZMzxYfJvRyWZoqs1fImV9y2s1sG0KRPoBmxZZcuw",
+    "y": "jfzUW4QSFIvtnXfIn0IW4ATJRTBRS3e-f6RH0Dw3Wio",
+}
+
+import json
+
+# Build the public key once at module load
+_PUBLIC_KEY = ECAlgorithm.from_jwk(json.dumps(_SUPABASE_PUBLIC_KEY_JWK))
 
 
 class AuthUser(BaseModel):
@@ -29,19 +52,26 @@ class AuthUser(BaseModel):
 
 def decode_supabase_jwt(token: str) -> dict:
     """
-    Decode and verify a Supabase JWT.
-    Supabase uses HS256 with the project JWT secret.
+    Decode and verify a Supabase JWT using ES256 (ECC P-256).
+    Supabase migrated from HS256 shared secret to asymmetric ES256 signing.
+    Verification uses the public key from Supabase's JWKS endpoint.
     """
-    settings = get_settings()
     try:
-        payload = jwt.decode(
+        payload = pyjwt.decode(
             token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
+            _PUBLIC_KEY,
+            algorithms=["ES256"],
             audience="authenticated",
         )
         return payload
-    except JWTError as exc:
+    except pyjwt.ExpiredSignatureError as exc:
+        logger.warning("jwt_expired", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired.",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except pyjwt.PyJWTError as exc:
         logger.warning("jwt_decode_failed", error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

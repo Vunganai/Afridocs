@@ -70,6 +70,11 @@ async def onboard(
     )
     db.add(user)
 
+    # Flush to get DB-generated values (id, created_at, is_active defaults)
+    await db.flush()
+    await db.refresh(tenant)
+    await db.refresh(user)
+
     # Audit log
     audit = AuditService(db)
     await audit.log(

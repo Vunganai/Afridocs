@@ -54,8 +54,10 @@ Example: {"invoice_number": {"value": "INV-2024-001", "confidence": 0.95}}
 """.strip()
 
 
-def get_openai_client() -> AzureOpenAI:
+def get_openai_client():
     settings = get_settings()
+    # Azure AI Foundry endpoint requires AzureOpenAI client with the base resource URL
+    # The /api/projects/... path is appended automatically by the SDK
     return AzureOpenAI(
         azure_endpoint=settings.azure_openai_endpoint,
         api_key=settings.azure_openai_key,
@@ -72,6 +74,7 @@ class OpenAIService:
     def __init__(self):
         self._client = get_openai_client()
         self._settings = get_settings()
+        self._deployment = self._settings.azure_openai_deployment_name
 
     @retry(
         stop=stop_after_attempt(2),
@@ -86,7 +89,7 @@ class OpenAIService:
         logger.info("openai_classify_start")
         try:
             response = self._client.chat.completions.create(
-                model=self._settings.azure_openai_deployment_name,
+                model=self._deployment,
                 messages=[
                     {"role": "system", "content": CLASSIFICATION_SYSTEM_PROMPT},
                     {
@@ -134,7 +137,7 @@ class OpenAIService:
                 f"Raw invoice text:\n{raw_text[:6000]}"
             )
             response = self._client.chat.completions.create(
-                model=self._settings.azure_openai_deployment_name,
+                model=self._deployment,
                 messages=[
                     {"role": "system", "content": EXTRACTION_GAP_FILL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},

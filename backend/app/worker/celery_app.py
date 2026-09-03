@@ -3,8 +3,15 @@ Celery application factory.
 """
 
 from celery import Celery
+from celery.signals import worker_process_init
 
 from app.core.config import get_settings
+
+
+@worker_process_init.connect
+def reset_settings_cache(**kwargs):
+    """Clear the lru_cache on worker process start so fresh env vars are read."""
+    get_settings.cache_clear()
 
 
 def create_celery_app() -> Celery:

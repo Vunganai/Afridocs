@@ -19,10 +19,10 @@ export function DashboardPage() {
   });
 
   const metrics = [
-    { label: "Total Invoices", value: data?.totalDocuments || 0 },
-    { label: "Processed (7d)", value: data?.processedLast7Days || 0 },
-    { label: "Processed (30d)", value: data?.processedLast30Days || 0 },
-    { label: "Pending Review", value: data?.pendingReview || 0 },
+    { label: "Total Invoices", value: data?.total_documents || 0 },
+    { label: "Processed (7d)", value: data?.processed_last_7_days || 0 },
+    { label: "Processed (30d)", value: data?.processed_last_30_days || 0 },
+    { label: "Pending Review", value: data?.pending_review || 0 },
   ];
 
   return (
@@ -63,7 +63,7 @@ export function DashboardPage() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {data?.statusBreakdown.map((s) => (
+                {data?.status_breakdown?.map((s) => (
                   <div key={s.status} className="text-center">
                     <div className="text-2xl font-bold text-afri-green">{s.count}</div>
                     <p className="text-sm text-muted-foreground capitalize">{s.status.replace("_", " ")}</p>
@@ -78,7 +78,7 @@ export function DashboardPage() {
             <Card className="hover:bg-accent/50 cursor-pointer transition">
               <CardContent className="p-6 text-center" onClick={() => navigate("/review")}>
                 <AlertCircle className="h-8 w-8 mx-auto mb-2 text-yellow-500" />
-                <p className="font-medium">{data?.pendingReview || 0} Pending</p>
+                <p className="font-medium">{data?.pending_review || 0} Pending</p>
                 <p className="text-xs text-muted-foreground">awaiting review</p>
               </CardContent>
             </Card>

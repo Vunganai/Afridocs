@@ -20,7 +20,7 @@ from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
 
-UPLOADS_DIR = Path(__file__).parent.parent.parent / "uploads"
+UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", "/app/uploads"))
 
 
 class StorageService:

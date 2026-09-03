@@ -85,7 +85,8 @@ def process_invoice(self: ProcessInvoiceTask, document_id: str) -> dict:
 async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> dict:
     """Async implementation of the processing pipeline."""
     from sqlalchemy import select
-    from app.db.base import AsyncSessionLocal
+    from sqlalchemy.pool import NullPool
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
     from app.models.document import Document, DocumentStatus, ExtractedField, DocumentVersion
     from app.models.workflow import WorkflowStep
     from app.core.config import get_settings
@@ -94,7 +95,22 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
     settings = get_settings()
     doc_uuid = uuid.UUID(document_id)
 
-    async with AsyncSessionLocal() as db:
+    # Create a fresh engine per task — avoids event loop conflicts in Celery prefork workers
+    engine = create_async_engine(
+        settings.database_url,
+        poolclass=NullPool,
+        connect_args={"statement_cache_size": 0},
+    )
+    TaskSession = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+        autocommit=False,
+    )
+
+    try:
+      async with TaskSession() as db:
         # ── Step 0: Load document ────────────────────────────────────────
         result = await db.execute(select(Document).where(Document.id == doc_uuid))
         document = result.scalar_one_or_none()
@@ -344,6 +360,8 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
 
             # Retry with exponential backoff (max 3 attempts)
             raise task.retry(exc=exc)
+    finally:
+        await engine.dispose()
 
 
 def _field_val(fields: dict, name: str) -> str | None:

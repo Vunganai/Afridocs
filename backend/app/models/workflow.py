@@ -129,8 +129,9 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
     resource_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     resource_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
-    # Payload
-    metadata: Mapped[dict | None] = mapped_column(
+    # Payload — named event_metadata to avoid collision with SQLAlchemy's reserved 'metadata'
+    event_metadata: Mapped[dict | None] = mapped_column(
+        "metadata",  # keep the DB column name as 'metadata' for migration compatibility
         JSONB,
         nullable=True,
         comment="Additional event data (sanitised — no PII beyond what is necessary)",

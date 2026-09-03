@@ -47,7 +47,7 @@ class AuditService:
             event_type=event_type,
             resource_type=resource_type,
             resource_id=resource_id,
-            metadata=metadata,
+            event_metadata=metadata,
             ip_address=ip_address,
             user_agent=user_agent,
         )
