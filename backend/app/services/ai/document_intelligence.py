@@ -31,6 +31,7 @@ class InvoiceExtractionResult:
 
     def __init__(self, raw: AnalyzeResult):
         self._raw = raw
+        self.content: str = getattr(raw, "content", None) or ""
         self.fields: dict[str, dict] = {}
         self._parse()
 
@@ -49,7 +50,9 @@ class InvoiceExtractionResult:
             "due_date": "DueDate",
             "supplier_name": "VendorName",
             "supplier_vat_number": "VendorTaxId",
-            "supplier_email": "VendorAddress",  # Best-effort from address block
+            "supplier_email": "VendorEmail",
+            "supplier_address": "VendorAddress",
+            "customer_name": "CustomerName",
             "total_amount": "InvoiceTotal",
             "vat_amount": "TotalTax",
             "subtotal": "SubTotal",
@@ -58,20 +61,36 @@ class InvoiceExtractionResult:
             "payment_terms": "PaymentTerm",
         }
 
+        detected_currency: str | None = None
+
         for our_name, azure_name in field_map.items():
             azure_field = (doc.fields or {}).get(azure_name)
             if azure_field is None:
                 self.fields[our_name] = {"value": None, "confidence": 0.0}
                 continue
 
-            # Extract typed value
             value = None
             if hasattr(azure_field, "value_string") and azure_field.value_string:
                 value = azure_field.value_string
             elif hasattr(azure_field, "value_date") and azure_field.value_date:
                 value = str(azure_field.value_date)
             elif hasattr(azure_field, "value_currency") and azure_field.value_currency:
-                value = str(azure_field.value_currency.amount)
+                curr = azure_field.value_currency
+                value = str(getattr(curr, "amount", None) or azure_field.content)
+                code = (
+                    getattr(curr, "currency_code", None)
+                    or getattr(curr, "currencyCode", None)
+                    or getattr(curr, "code", None)
+                )
+                if code:
+                    detected_currency = str(code).upper()
+            elif hasattr(azure_field, "value_address") and azure_field.value_address:
+                addr = azure_field.value_address
+                parts = [
+                    getattr(addr, p, None)
+                    for p in ("street_address", "city", "state", "postal_code", "country_region")
+                ]
+                value = ", ".join(str(p) for p in parts if p) or azure_field.content
             elif hasattr(azure_field, "content") and azure_field.content:
                 value = azure_field.content
 
@@ -80,7 +99,9 @@ class InvoiceExtractionResult:
                 "confidence": azure_field.confidence or 0.0,
             }
 
-        # Parse line items
+        if detected_currency and not self.fields.get("currency", {}).get("value"):
+            self.fields["currency"] = {"value": detected_currency, "confidence": 0.9}
+
         line_items_field = (doc.fields or {}).get("Items")
         if line_items_field and hasattr(line_items_field, "value_array"):
             self.fields["line_items"] = {

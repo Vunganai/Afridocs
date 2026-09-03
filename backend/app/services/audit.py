@@ -87,3 +87,4 @@ class AuditEventType:
     DOCUMENT_REJECTED = "document.rejected"
     DOCUMENT_DUPLICATE_DETECTED = "document.duplicate_detected"
     DOCUMENT_EXPORTED = "document.exported"
+    DOCUMENT_DELETED = "document.deleted"

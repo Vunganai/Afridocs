@@ -183,6 +183,36 @@ class InvoiceValidator:
             except (InvalidOperation, ZeroDivisionError):
                 pass
 
+        # Cross-check: subtotal + VAT ≈ total
+        total_for_sum = fields.get("total_amount", {}).get("value")
+        if subtotal_value and vat_amount_value and total_for_sum:
+            try:
+                subtotal = Decimal(str(subtotal_value))
+                vat_amt = Decimal(str(vat_amount_value))
+                total = Decimal(str(total_for_sum))
+                expected_total = subtotal + vat_amt
+                if abs(expected_total - total) > Decimal("0.05"):
+                    report.add(FieldValidationResult(
+                        field_name="total_amount",
+                        status="warning",
+                        message=(
+                            f"Total ({total}) does not match subtotal ({subtotal}) "
+                            f"+ VAT ({vat_amt}) = {expected_total}."
+                        ),
+                    ))
+                    report.should_route_to_review = True
+            except InvalidOperation:
+                pass
+
+        # Email must look like an email
+        email_value = (fields.get("supplier_email", {}) or {}).get("value")
+        if email_value and "@" not in str(email_value):
+            report.add(FieldValidationResult(
+                field_name="supplier_email",
+                status="warning",
+                message="Supplier email does not look like an email address.",
+            ))
+
         # Route to review if any required field has low confidence
         low_confidence_required = [
             f for f in self.REQUIRED_FIELDS

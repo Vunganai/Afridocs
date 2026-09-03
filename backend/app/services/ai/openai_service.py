@@ -35,22 +35,42 @@ If you cannot determine the type, use "other" with low confidence.
 """.strip()
 
 EXTRACTION_GAP_FILL_SYSTEM_PROMPT = """
-You are an expert at extracting structured data from business invoices for African companies.
+You are an expert at extracting structured data from business invoices, including
+SaaS invoices billed in USD/EUR that still mention South African VAT.
+
 You will receive:
 1. The raw text extracted from an invoice via OCR
-2. Fields that were NOT successfully extracted by the primary OCR system (missing or low confidence)
-
-Your task is to attempt to extract ONLY the missing fields from the raw text.
+2. Fields that were NOT successfully extracted by the primary OCR system
 
 Rules:
 - Only return fields you are confident about (confidence >= 0.7)
-- For currency, default to ZAR if you see South African context but no explicit currency
+- NEVER default currency to ZAR just because "South Africa" or "VAT" appears.
+  Use the currency next to Amount due / Total (e.g. "$6.90 USD" → USD).
 - For dates, use ISO 8601 format (YYYY-MM-DD)
-- For amounts, return only the numeric value as a string (e.g. "1250.00")
-- For VAT numbers, South African format is 10 digits (no prefix)
+- For amounts, return only the numeric value as a string (e.g. "6.90")
+- supplier_email must be a real email (contains @). Never put a street address there.
+- supplier_vat_number: keep digits; SA numbers are often 10 digits after "ZA VAT"
 
 Respond ONLY with a valid JSON object mapping field_name → {value, confidence}.
-Example: {"invoice_number": {"value": "INV-2024-001", "confidence": 0.95}}
+""".strip()
+
+EXTRACTION_REFINE_SYSTEM_PROMPT = """
+You refine invoice field extraction. You receive OCR text plus a first-pass JSON of fields.
+Correct mistakes and fill gaps. Return ALL of these keys (use null if unknown):
+invoice_number, invoice_date, due_date, supplier_name, supplier_vat_number,
+supplier_email, supplier_address, total_amount, vat_amount, subtotal, currency.
+
+Rules:
+- Amounts: numeric strings only (e.g. "6.90"), no currency symbols.
+- Dates: YYYY-MM-DD.
+- currency: ISO code from Amount due / Total (USD if "$6.90 USD"), not from VAT country.
+- supplier_email: only a valid email (e.g. team@elevenlabs.io). Addresses go in supplier_address.
+- Prefer "Amount due" / "Total" over secondary converted amounts like "R15.00".
+- subtotal + vat_amount should equal total_amount when all three are present.
+- Do not invent values. confidence 0.0–1.0 per field.
+
+Respond ONLY with JSON:
+{"invoice_number": {"value": "...", "confidence": 0.95}, ...}
 """.strip()
 
 
@@ -153,4 +173,48 @@ class OpenAIService:
         except (APIError, json.JSONDecodeError) as exc:
             logger.error("openai_gap_fill_error", error=str(exc))
             # Gap-filling is best-effort — don't fail the pipeline
+            return {}
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=1, max=5),
+        reraise=True,
+    )
+    def refine_extraction(
+        self,
+        raw_text: str,
+        current_fields: dict[str, dict],
+    ) -> dict[str, dict]:
+        """
+        Second-pass LLM correction using full OCR text + first-pass fields.
+        Returns a partial or full field map; caller merges by confidence.
+        """
+        logger.info("openai_refine_start")
+        compact = {
+            k: {"value": v.get("value"), "confidence": v.get("confidence")}
+            for k, v in current_fields.items()
+            if k != "line_items"
+        }
+        try:
+            prompt = (
+                "First-pass fields (JSON):\n"
+                f"{json.dumps(compact, default=str)[:4000]}\n\n"
+                f"OCR text:\n{raw_text[:8000]}"
+            )
+            response = self._client.chat.completions.create(
+                model=self._deployment,
+                messages=[
+                    {"role": "system", "content": EXTRACTION_REFINE_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=900,
+            )
+            content = response.choices[0].message.content
+            result = json.loads(content)
+            logger.info("openai_refine_complete", refined_fields=list(result.keys()))
+            return result if isinstance(result, dict) else {}
+        except (APIError, json.JSONDecodeError) as exc:
+            logger.error("openai_refine_error", error=str(exc))
             return {}

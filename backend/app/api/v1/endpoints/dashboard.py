@@ -2,7 +2,7 @@
 Dashboard / reporting endpoints.
 """
 
-from datetime import date, timedelta
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -13,16 +13,17 @@ from app.core.security import CurrentUser
 from app.db.session import DbSession
 from app.models.document import Document, DocumentStatus
 from app.models.user import User
+from app.schemas.common import CamelModel
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 
-class DocumentStatusCount(BaseModel):
+class DocumentStatusCount(CamelModel):
     status: str
     count: int
 
 
-class DashboardMetrics(BaseModel):
+class DashboardMetrics(CamelModel):
     total_documents: int
     processed_last_7_days: int
     processed_last_30_days: int
@@ -47,7 +48,9 @@ async def get_dashboard_metrics(
         raise NotFoundError("User profile not found.")
 
     tenant_id = db_user.tenant_id
-    today = date.today()
+    now = datetime.now(timezone.utc)
+    cutoff_7d = now - timedelta(days=7)
+    cutoff_30d = now - timedelta(days=30)
 
     # Total documents
     total = (
@@ -59,23 +62,23 @@ async def get_dashboard_metrics(
         )
     ).scalar_one()
 
-    # Processed in last 7 days
+    # Uploaded in last 7 days
     last_7 = (
         await db.execute(
             select(func.count(Document.id)).where(
                 Document.tenant_id == tenant_id,
-                Document.created_at >= today - timedelta(days=7),
+                Document.created_at >= cutoff_7d,
                 Document.deleted_at.is_(None),
             )
         )
     ).scalar_one()
 
-    # Processed in last 30 days
+    # Uploaded in last 30 days
     last_30 = (
         await db.execute(
             select(func.count(Document.id)).where(
                 Document.tenant_id == tenant_id,
-                Document.created_at >= today - timedelta(days=30),
+                Document.created_at >= cutoff_30d,
                 Document.deleted_at.is_(None),
             )
         )

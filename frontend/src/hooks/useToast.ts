@@ -28,7 +28,7 @@ interface State {
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
-function addToRemoveQueue(toastId: string, dispatch: React.Dispatch<Action>) {
+function addToRemoveQueue(toastId: string) {
   if (toastTimeouts.has(toastId)) return;
   const timeout = setTimeout(() => {
     toastTimeouts.delete(toastId);
@@ -42,6 +42,14 @@ function reducer(state: State, action: Action): State {
     case "ADD_TOAST":
       return { toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT) };
     case "DISMISS_TOAST": {
+      const { toastId } = action;
+      if (toastId) {
+        addToRemoveQueue(toastId);
+      } else {
+        state.toasts.forEach((t) => {
+          addToRemoveQueue(t.id);
+        });
+      }
       return {
         toasts: state.toasts.map((t) =>
           t.id === action.toastId || action.toastId === undefined

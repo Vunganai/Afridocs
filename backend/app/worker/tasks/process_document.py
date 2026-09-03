@@ -143,7 +143,12 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
             extraction_result = task.doc_intel.analyze_invoice(
                 file_bytes, document.mime_type
             )
-            raw_text = _build_raw_text(extraction_result.fields)
+            from app.services.ai.normalizer import apply_field_heuristics, clean_ocr_text
+
+            raw_text = clean_ocr_text(
+                getattr(extraction_result, "content", None) or _build_raw_text(extraction_result.fields)
+            )
+            apply_field_heuristics(extraction_result.fields, raw_text)
 
             classification = task.openai_svc.classify_document(raw_text)
             doc_type = classification.get("document_type", "other")
@@ -182,6 +187,7 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
                         Document.supplier_name.ilike(supplier_name),
                         Document.id != doc_uuid,
                         Document.is_duplicate.is_(False),
+                        Document.deleted_at.is_(None),
                     )
                 )
                 existing = dup_result.scalar_one_or_none()
@@ -212,10 +218,17 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
             if missing:
                 gap_fills = task.openai_svc.fill_extraction_gaps(raw_text, missing)
                 for field_name, fill_data in gap_fills.items():
+                    if not isinstance(fill_data, dict):
+                        continue
                     if field_name not in extraction_result.fields:
                         extraction_result.fields[field_name] = fill_data
                     elif not extraction_result.fields[field_name].get("value"):
                         extraction_result.fields[field_name] = fill_data
+
+            # ── Step 4b: LLM refine pass (currency, email vs address, totals) ─
+            refined = task.openai_svc.refine_extraction(raw_text, extraction_result.fields)
+            _merge_refined_fields(extraction_result.fields, refined)
+            apply_field_heuristics(extraction_result.fields, raw_text)
 
             # ── Step 5: Validate ─────────────────────────────────────────
             validation_report = task.validator.validate(
@@ -362,6 +375,27 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
             raise task.retry(exc=exc)
     finally:
         await engine.dispose()
+
+
+def _merge_refined_fields(fields: dict, refined: dict) -> None:
+    """Merge LLM refine output when it fills a gap or has equal/higher confidence."""
+    if not refined:
+        return
+    for name, data in refined.items():
+        if not isinstance(data, dict) or name == "line_items":
+            continue
+        value = data.get("value")
+        if value in (None, "", "null"):
+            continue
+        try:
+            conf = float(data.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        existing = fields.get(name) or {}
+        existing_val = existing.get("value")
+        existing_conf = float(existing.get("confidence") or 0.0)
+        if not existing_val or conf >= existing_conf:
+            fields[name] = {"value": value, "confidence": conf}
 
 
 def _field_val(fields: dict, name: str) -> str | None:

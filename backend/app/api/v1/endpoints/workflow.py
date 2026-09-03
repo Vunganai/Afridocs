@@ -39,6 +39,7 @@ async def _get_tenant_user(current_user: CurrentUser, db: DbSession) -> User:
 async def get_review_queue(
     current_user: CurrentUser,
     db: DbSession,
+    status_filter: str | None = Query(default=None, alias="status"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> PaginatedResponse[DocumentListItem]:
@@ -52,15 +53,21 @@ async def get_review_queue(
     if db_user.role not in ("admin", "reviewer", "approver"):
         raise ForbiddenError("You do not have access to the review queue.")
 
+    allowed_statuses = [
+        DocumentStatus.REVIEW_REQUIRED,
+        DocumentStatus.EXTRACTED,
+    ]
+    if status_filter and status_filter in allowed_statuses:
+        target_statuses = [status_filter]
+    else:
+        target_statuses = allowed_statuses
+
     from sqlalchemy import func
     query = (
         select(Document)
         .where(
             Document.tenant_id == db_user.tenant_id,
-            Document.status.in_([
-                DocumentStatus.REVIEW_REQUIRED,
-                DocumentStatus.EXTRACTED,
-            ]),
+            Document.status.in_(target_statuses),
             Document.deleted_at.is_(None),
         )
         .order_by(Document.created_at.asc())
@@ -191,17 +198,11 @@ async def take_workflow_action(
 
         else:
             # Step 2 (or direct approval from EXTRACTED)
-            # Check approval threshold
-            tenant_result = await db.execute(
-                select(db_user.tenant.__class__).where(
-                    db_user.tenant.__class__.id == db_user.tenant_id
-                )
-            )
-            # Use db_user.tenant_id — check role for high-value invoices
+            # Check role permissions for final approval
             if db_user.role == "reviewer" and db_user.role != "admin":
                 raise ForbiddenError(
                     "Reviewers cannot give final approval. "
-                    "This document requires approver or admin sign-off."
+                    "This document is in the approval queue and requires an Approver or Admin sign-off."
                 )
 
             doc.status = DocumentStatus.APPROVED
