@@ -127,6 +127,13 @@ See `.env.example` for the full list. Required before first run:
 - `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` + `AZURE_DOCUMENT_INTELLIGENCE_KEY`
 - `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_KEY` + `AZURE_OPENAI_DEPLOYMENT_NAME`
 
+## CI/CD
+
+- **CI** (every PR and `main`): lint and tests — `.github/workflows/ci.yml`
+- **CD** (after CI succeeds on `main`): push images to GitHub Container Registry — `.github/workflows/cd.yml`
+
+How to pull those images and run them: **[docs/deploy-v1.md](docs/deploy-v1.md)**. Local development still uses `docker compose up --build`.
+
 ## Makefile Commands
 
 ```bash
