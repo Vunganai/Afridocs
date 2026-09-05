@@ -10,7 +10,6 @@ from app.services.ai.normalizer import (
 )
 from app.services.ai.validator import InvoiceValidator
 
-
 ELEVENLABS_OCR = """
 Invoice number ZD1OSZRA\x000002
 Eleven Labs Inc. (@elevenlabs)

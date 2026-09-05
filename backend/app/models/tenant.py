@@ -3,14 +3,18 @@ Tenant model — one row per organisation using AfriDocs AI.
 Multi-tenancy is enforced via tenant_id on all data tables + Supabase RLS.
 """
 
-import uuid
 
-from sqlalchemy import Boolean, Integer, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.mixins import SoftDeleteMixin, TimestampMixin, UUIDPrimaryKeyMixin
+
+if TYPE_CHECKING:
+    from app.models.document import Document
+    from app.models.user import User
 
 
 class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Base):

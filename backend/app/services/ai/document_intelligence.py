@@ -5,15 +5,19 @@ Handles OCR and pre-built invoice model extraction.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 from azure.ai.documentintelligence import DocumentIntelligenceClient
-from azure.ai.documentintelligence.models import AnalyzeResult
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import HttpResponseError
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings
 from app.core.exceptions import ExternalServiceError
+
+if TYPE_CHECKING:
+    from azure.ai.documentintelligence.models import AnalyzeResult
 
 logger = structlog.get_logger(__name__)
 

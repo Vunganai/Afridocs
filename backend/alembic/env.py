@@ -7,14 +7,15 @@ Uses async SQLAlchemy to match the application engine.
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
+
+import app.models  # noqa: F401 — registers all models on Base.metadata
+from alembic import context
 
 # Load app config and all models so Alembic sees them
 from app.core.config import get_settings
 from app.db.base import Base
-import app.models  # noqa: F401 — registers all models on Base.metadata
 
 # Alembic Config object — gives access to alembic.ini values
 config = context.config

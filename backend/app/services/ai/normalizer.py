@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 
-
 CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
 CURRENCY_CODE_RE = re.compile(r"\b(USD|EUR|GBP|ZAR|KES|NGN|GHS|ZMW|BWP|MZN|TZS|UGX|RWF|ETB|MWK)\b", re.IGNORECASE)

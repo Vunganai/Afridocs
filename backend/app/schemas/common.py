@@ -2,9 +2,7 @@
 Shared Pydantic schema primitives used across the API.
 """
 
-from datetime import datetime
 from typing import Generic, TypeVar
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel

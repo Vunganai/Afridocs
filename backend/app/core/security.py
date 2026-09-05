@@ -9,14 +9,12 @@ Tokens are verified using the public key from Supabase's JWKS endpoint.
 from typing import Annotated
 from uuid import UUID
 
-import structlog
 import jwt as pyjwt
-from jwt.algorithms import ECAlgorithm
+import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt.algorithms import ECAlgorithm
 from pydantic import BaseModel
-
-from app.core.config import get_settings
 
 logger = structlog.get_logger(__name__)
 

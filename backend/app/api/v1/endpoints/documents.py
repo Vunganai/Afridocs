@@ -2,6 +2,7 @@
 Document endpoints — upload, list, detail, corrections, export.
 """
 
+import contextlib
 import csv
 import io
 import json
@@ -16,10 +17,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
-from app.core.exceptions import ConflictError, NotFoundError, UploadError, ForbiddenError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, UploadError
 from app.core.security import CurrentUser
 from app.db.session import DbSession
-from app.models.document import Document, DocumentStatus, ExtractedField, DocumentVersion
+from app.models.document import Document, DocumentStatus, DocumentVersion, ExtractedField
 from app.models.user import User
 from app.schemas.common import MessageResponse, PaginatedResponse
 from app.schemas.document import (
@@ -27,9 +28,16 @@ from app.schemas.document import (
     DocumentDetail,
     DocumentListItem,
     ExportRequest,
+    ProcessingProgress,
     UploadResponse,
 )
 from app.services.audit import AuditEventType, AuditService
+from app.services.processing_progress import (
+    build_steps,
+    fallback_from_status,
+    get_progress,
+    set_progress,
+)
 from app.services.storage import StorageService
 
 logger = structlog.get_logger(__name__)
@@ -147,6 +155,14 @@ async def upload_document(
     except Exception as exc:
         logger.warning("celery_enqueue_failed_at_upload", document_id=str(doc.id), error=str(exc))
 
+    set_progress(
+        str(doc.id),
+        stage="queued",
+        percent=8,
+        message="Upload complete. Waiting for AI processing to start.",
+        status=DocumentStatus.PENDING,
+    )
+
     logger.info(
         "document_uploaded",
         document_id=str(doc.id),
@@ -238,6 +254,63 @@ async def get_document(
         raise NotFoundError(f"Document {document_id} not found.")
 
     return DocumentDetail.model_validate(doc)
+
+
+@router.get("/{document_id}/progress", response_model=ProcessingProgress)
+async def get_document_progress(
+    document_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> ProcessingProgress:
+    """Live processing progress for the upload loading screen."""
+    db_user = await _get_tenant_user(current_user, db)
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.tenant_id == db_user.tenant_id,
+            Document.deleted_at.is_(None),
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise NotFoundError(f"Document {document_id} not found.")
+
+    cached = get_progress(str(document_id)) or fallback_from_status(doc.status, doc.processing_error)
+    status = doc.status
+    done = status in (
+        DocumentStatus.EXTRACTED,
+        DocumentStatus.REVIEW_REQUIRED,
+        DocumentStatus.APPROVED,
+        DocumentStatus.REJECTED,
+        DocumentStatus.DUPLICATE,
+        DocumentStatus.FAILED,
+    )
+    if done:
+        cached["done"] = True
+        cached["percent"] = 100
+        cached["status"] = status
+        if status == DocumentStatus.FAILED:
+            cached["stage"] = cached.get("stage") or "save"
+            cached["message"] = doc.processing_error or cached.get("message") or "Processing failed."
+            cached["error"] = doc.processing_error
+        else:
+            cached["stage"] = "complete"
+            cached["message"] = cached.get("message") or "Processing complete."
+            cached["error"] = None
+
+    failed = status == DocumentStatus.FAILED
+    steps = build_steps(cached.get("stage") or "queued", done=done and not failed, failed=failed)
+    return ProcessingProgress(
+        document_id=doc.id,
+        filename=doc.original_filename,
+        status=status,
+        stage=cached.get("stage") or "queued",
+        percent=int(cached.get("percent") or 0),
+        message=cached.get("message") or "Processing...",
+        done=bool(cached.get("done")),
+        error=cached.get("error") or doc.processing_error,
+        steps=steps,
+    )
 
 
 # ── Delete ─────────────────────────────────────────────────────────────────
@@ -368,6 +441,13 @@ async def trigger_document_processing(
     doc.status = DocumentStatus.PENDING
     doc.processing_error = None
     await db.flush()
+    set_progress(
+        str(doc.id),
+        stage="queued",
+        percent=8,
+        message="Processing restarted.",
+        status=DocumentStatus.PENDING,
+    )
 
     if sync:
         from app.worker.tasks.process_document import ProcessInvoiceTask, _process_invoice_async
@@ -393,7 +473,7 @@ async def trigger_document_processing(
             try:
                 res = await _process_invoice_async(task, str(doc.id))
                 return MessageResponse(message=f"Document processed: {res.get('status')}")
-            except Exception as inner_exc:
+            except Exception:
                 await _simulate_mock_extraction(doc, db, db_user)
                 return MessageResponse(
                     message="Document processed using development simulation."
@@ -408,6 +488,7 @@ async def _simulate_mock_extraction(doc: Document, db: DbSession, db_user: User)
     """
     from datetime import date
     from decimal import Decimal
+
     from app.models.workflow import WorkflowStep
 
     clean_name = doc.original_filename.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").title()
@@ -479,6 +560,13 @@ async def _simulate_mock_extraction(doc: Document, db: DbSession, db_user: User)
         metadata={"simulation": True},
     )
     await db.flush()
+    set_progress(
+        str(doc.id),
+        stage="complete",
+        percent=100,
+        message="Processing complete.",
+        status=DocumentStatus.REVIEW_REQUIRED,
+    )
 
 
 # ── Corrections ────────────────────────────────────────────────────────────
@@ -497,6 +585,7 @@ async def correct_document(
     Also synchronises denormalised fields on Document for consistency.
     """
     from decimal import Decimal, InvalidOperation
+
     from app.services.ai.validator import InvoiceValidator
 
     db_user = await _get_tenant_user(current_user, db)
@@ -563,15 +652,11 @@ async def correct_document(
         elif fname == "currency" and val:
             doc.currency = val.upper()
         elif fname == "total_amount":
-            try:
+            with contextlib.suppress(InvalidOperation):
                 doc.total_amount = Decimal(str(val)) if val else None
-            except InvalidOperation:
-                pass
         elif fname == "vat_amount":
-            try:
+            with contextlib.suppress(InvalidOperation):
                 doc.vat_amount = Decimal(str(val)) if val else None
-            except InvalidOperation:
-                pass
         elif fname == "invoice_date":
             doc.invoice_date = InvoiceValidator._parse_date(val) if val else None
         elif fname == "due_date":

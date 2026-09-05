@@ -13,8 +13,8 @@ from pathlib import Path
 
 import aiofiles
 import structlog
-from azure.storage.blob import BlobServiceClient
 from azure.core.exceptions import AzureError
+from azure.storage.blob import BlobServiceClient
 
 from app.core.config import get_settings
 
