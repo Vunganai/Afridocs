@@ -3,6 +3,7 @@ Unit tests for the invoice validator — no external calls needed.
 """
 
 import pytest
+
 from app.services.ai.validator import InvoiceValidator
 
 

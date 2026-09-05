@@ -10,6 +10,7 @@ import { DashboardPage } from "@/pages/dashboard/Dashboard";
 import { UploadPage } from "@/pages/documents/Upload";
 import { DocumentListPage } from "@/pages/documents/List";
 import { DocumentDetailPage } from "@/pages/documents/Detail";
+import { ProcessingPage } from "@/pages/documents/Processing";
 import { ReviewQueuePage } from "@/pages/review/ReviewQueue";
 import { ReviewDetailPage } from "@/pages/review/ReviewDetail";
 
@@ -54,6 +55,7 @@ function AppRoutes() {
         <Route index element={<DashboardPage />} />
         <Route path="/upload" element={<UploadPage />} />
         <Route path="/documents" element={<DocumentListPage />} />
+        <Route path="/documents/:documentId/processing" element={<ProcessingPage />} />
         <Route path="/documents/:documentId" element={<DocumentDetailPage />} />
         <Route path="/review" element={<ReviewQueuePage />} />
         <Route path="/review/:documentId" element={<ReviewDetailPage />} />

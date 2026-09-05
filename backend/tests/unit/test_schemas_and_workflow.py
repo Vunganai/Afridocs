@@ -3,22 +3,20 @@ Unit tests for Pydantic schema serialization (camelCase conversion)
 and workflow action validation.
 """
 
-from uuid import uuid4
-from datetime import datetime, timezone, date
+from datetime import UTC, date, datetime
 from decimal import Decimal
+from uuid import uuid4
+
 import pytest
 from pydantic import ValidationError
 
+from app.api.v1.endpoints.dashboard import DashboardMetrics, DocumentStatusCount
 from app.schemas.common import CamelModel
 from app.schemas.document import (
-    DocumentListItem,
     DocumentDetail,
     ExtractedFieldSchema,
-    ExtractedFieldCorrection,
-    DocumentCorrectionsRequest,
     WorkflowActionRequest,
 )
-from app.api.v1.endpoints.dashboard import DashboardMetrics, DocumentStatusCount
 
 
 def test_camel_model_alias_generator():
@@ -65,7 +63,7 @@ def test_extracted_field_serialization():
 
 def test_document_detail_extracted_fields_key():
     """Verify DocumentDetail serializes 'extracted_fields' as 'extractedFields' to prevent frontend crash."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     doc = DocumentDetail(
         id=uuid4(),
         original_filename="sample_invoice.pdf",

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 import structlog
-from openai import AzureOpenAI, APIError
+from openai import APIError, AzureOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import get_settings

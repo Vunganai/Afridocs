@@ -7,11 +7,11 @@ post-auth provisioning of Tenant and User records in our database.
 from fastapi import APIRouter, Request
 from sqlalchemy import select
 
+from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import CurrentUser
 from app.db.session import DbSession
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.schemas.common import MessageResponse
 from app.schemas.tenant import (
     OnboardingRequest,
     OnboardingResponse,
@@ -19,7 +19,6 @@ from app.schemas.tenant import (
     UserResponse,
 )
 from app.services.audit import AuditEventType, AuditService
-from app.core.exceptions import ConflictError, NotFoundError
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 

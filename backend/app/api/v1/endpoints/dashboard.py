@@ -2,10 +2,9 @@
 Dashboard / reporting endpoints.
 """
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from fastapi import APIRouter
 from sqlalchemy import func, select
 
 from app.core.exceptions import NotFoundError
@@ -48,7 +47,7 @@ async def get_dashboard_metrics(
         raise NotFoundError("User profile not found.")
 
     tenant_id = db_user.tenant_id
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_7d = now - timedelta(days=7)
     cutoff_30d = now - timedelta(days=30)
 

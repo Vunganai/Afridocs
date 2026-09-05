@@ -14,7 +14,6 @@ The core AI pipeline:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 import structlog
 from celery import Task
@@ -85,12 +84,13 @@ def process_invoice(self: ProcessInvoiceTask, document_id: str) -> dict:
 async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> dict:
     """Async implementation of the processing pipeline."""
     from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-    from app.models.document import Document, DocumentStatus, ExtractedField, DocumentVersion
-    from app.models.workflow import WorkflowStep
+
     from app.core.config import get_settings
-    from app.services.audit import AuditService, AuditEventType
+    from app.models.document import Document, DocumentStatus, DocumentVersion, ExtractedField
+    from app.models.workflow import WorkflowStep
+    from app.services.audit import AuditEventType, AuditService
 
     settings = get_settings()
     doc_uuid = uuid.UUID(document_id)
@@ -131,12 +131,30 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
         document.status = DocumentStatus.PROCESSING
         await db.commit()
 
+        from app.services.processing_progress import set_progress
+
+        set_progress(
+            document_id,
+            stage="reading",
+            percent=15,
+            message="Loading the invoice file...",
+            status=DocumentStatus.PROCESSING,
+        )
+
         audit = AuditService(db)
 
         try:
             # ── Step 1: Read file from storage ───────────────────────────
             logger.info("process_invoice_start", document_id=document_id)
             file_bytes = await task.storage.read(document.storage_path)
+
+            set_progress(
+                document_id,
+                stage="ocr",
+                percent=30,
+                message="Reading the invoice with OCR...",
+                status=DocumentStatus.PROCESSING,
+            )
 
             # ── Step 2: Classify document ────────────────────────────────
             # Extract raw text first for classification
@@ -150,6 +168,13 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
             )
             apply_field_heuristics(extraction_result.fields, raw_text)
 
+            set_progress(
+                document_id,
+                stage="classify",
+                percent=48,
+                message="Classifying the document...",
+                status=DocumentStatus.PROCESSING,
+            )
             classification = task.openai_svc.classify_document(raw_text)
             doc_type = classification.get("document_type", "other")
             class_confidence = classification.get("confidence", 0.0)
@@ -164,6 +189,13 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
                     f"(confidence {class_confidence:.0%}). Expected an invoice."
                 )
                 await db.commit()
+                set_progress(
+                    document_id,
+                    stage="complete",
+                    percent=100,
+                    message="Not classified as an invoice — sent to review.",
+                    status=DocumentStatus.REVIEW_REQUIRED,
+                )
                 logger.warning(
                     "process_invoice_wrong_type",
                     document_id=document_id,
@@ -203,6 +235,13 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
                         metadata={"duplicate_of": str(existing.id)},
                     )
                     await db.commit()
+                    set_progress(
+                        document_id,
+                        stage="complete",
+                        percent=100,
+                        message="Duplicate invoice detected.",
+                        status=DocumentStatus.DUPLICATE,
+                    )
                     logger.warning(
                         "process_invoice_duplicate",
                         document_id=document_id,
@@ -211,6 +250,13 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
                     return {"status": "duplicate", "duplicate_of": str(existing.id)}
 
             # ── Step 4: Gap-fill missing fields via LLM ───────────────────
+            set_progress(
+                document_id,
+                stage="extract",
+                percent=62,
+                message="Extracting invoice fields...",
+                status=DocumentStatus.PROCESSING,
+            )
             missing = [
                 name for name in REQUIRED_FOR_AUTO_APPROVE
                 if not extraction_result.fields.get(name, {}).get("value")
@@ -220,23 +266,42 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
                 for field_name, fill_data in gap_fills.items():
                     if not isinstance(fill_data, dict):
                         continue
-                    if field_name not in extraction_result.fields:
-                        extraction_result.fields[field_name] = fill_data
-                    elif not extraction_result.fields[field_name].get("value"):
+                    if field_name not in extraction_result.fields or not extraction_result.fields[field_name].get("value"):
                         extraction_result.fields[field_name] = fill_data
 
             # ── Step 4b: LLM refine pass (currency, email vs address, totals) ─
+            set_progress(
+                document_id,
+                stage="refine",
+                percent=78,
+                message="Improving extraction accuracy...",
+                status=DocumentStatus.PROCESSING,
+            )
             refined = task.openai_svc.refine_extraction(raw_text, extraction_result.fields)
             _merge_refined_fields(extraction_result.fields, refined)
             apply_field_heuristics(extraction_result.fields, raw_text)
 
             # ── Step 5: Validate ─────────────────────────────────────────
+            set_progress(
+                document_id,
+                stage="validate",
+                percent=88,
+                message="Validating amounts and business rules...",
+                status=DocumentStatus.PROCESSING,
+            )
             validation_report = task.validator.validate(
                 extraction_result.fields,
                 confidence_threshold=settings.extraction_confidence_threshold,
             )
 
             # ── Step 6: Persist extracted fields ─────────────────────────
+            set_progress(
+                document_id,
+                stage="save",
+                percent=94,
+                message="Saving extracted fields...",
+                status=DocumentStatus.PROCESSING,
+            )
             # Delete any previous extraction results
             prev = await db.execute(
                 select(ExtractedField).where(ExtractedField.document_id == doc_uuid)
@@ -350,6 +415,14 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
 
             await db.commit()
 
+            set_progress(
+                document_id,
+                stage="complete",
+                percent=100,
+                message="Processing complete.",
+                status=document.status,
+            )
+
             logger.info(
                 "process_invoice_complete",
                 document_id=document_id,
@@ -370,6 +443,14 @@ async def _process_invoice_async(task: ProcessInvoiceTask, document_id: str) -> 
             document.status = DocumentStatus.FAILED
             document.processing_error = str(exc)
             await db.commit()
+            set_progress(
+                document_id,
+                stage="save",
+                percent=100,
+                message=str(exc),
+                status=DocumentStatus.FAILED,
+                error=str(exc),
+            )
 
             # Retry with exponential backoff (max 3 attempts)
             raise task.retry(exc=exc)

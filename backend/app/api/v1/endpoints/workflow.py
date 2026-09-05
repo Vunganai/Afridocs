@@ -3,7 +3,7 @@ Workflow endpoints — review queue, approval, rejection.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Query
@@ -158,7 +158,7 @@ async def take_workflow_action(
         db.add(pending_step)
         await db.flush()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if body.action == "reject":
         # ── Reject ──────────────────────────────────────────────────────

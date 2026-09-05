@@ -10,7 +10,6 @@ from pydantic import Field, field_validator
 
 from app.schemas.common import CamelModel
 
-
 # ── Extracted Field ────────────────────────────────────────────────────────
 
 class ExtractedFieldSchema(CamelModel):
@@ -72,6 +71,24 @@ class DocumentStatusUpdate(CamelModel):
 
 
 # ── Upload ─────────────────────────────────────────────────────────────────
+
+class ProcessingStep(CamelModel):
+    id: str
+    label: str
+    state: str
+
+
+class ProcessingProgress(CamelModel):
+    document_id: UUID
+    filename: str
+    status: str
+    stage: str
+    percent: int
+    message: str
+    done: bool
+    error: str | None = None
+    steps: list[ProcessingStep]
+
 
 class UploadResponse(CamelModel):
     document_id: UUID

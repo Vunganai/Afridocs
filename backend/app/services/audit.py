@@ -6,13 +6,15 @@ Writes immutable AuditEvent records for all significant actions.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workflow import AuditEvent
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = structlog.get_logger(__name__)
 
@@ -40,7 +42,7 @@ class AuditService:
     ) -> AuditEvent:
         event = AuditEvent(
             id=uuid.uuid4(),
-            occurred_at=datetime.now(timezone.utc),
+            occurred_at=datetime.now(UTC),
             tenant_id=tenant_id,
             actor_id=actor_id,
             actor_email=actor_email,
